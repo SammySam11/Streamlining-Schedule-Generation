@@ -1,0 +1,660 @@
+import sqlite3 as sql
+conn = sql.connect('Horario.db')
+c = conn.cursor()
+c.execute("""create table room (number text, capacity integer)""")
+c.execute("insert into room Values ('A1', 25),"
+                                  "('A2', 45),"
+                                  "('A3', 35)")
+c.execute("""create table meeting_time (id text, time text)""")
+c.execute("insert into meeting_time Values ('HC1', 'LMV 09:00 - 10:00'),"
+                                          "('HC2', 'LMV 10:00 - 11:00'),"
+                                          "('HC3', 'MJS 09:00 - 10:30'),"
+                                          "('HC4', 'MJS 10:30 - 12:00')")
+c.execute("""create table instructor (number text, name text)""")
+c.execute("insert into instructor Values ('P1', 'Ing. Lorena Guachi'),"
+                                        "('P2', 'Ing. Alexander Tirira'),"
+                                        "('P3', 'Ing. Pablo Velarde'),"
+                                        "('P4', 'Ing. Viviana Moya')")
+c.execute("""create table instructor_availability (instructor_id text, meeting_time_id text)""")
+c.execute("insert into instructor_availability(instructor_id, meeting_time_id) values "
+                                                   "('P1', 'HC1'),"
+									               "('P1', 'HC2'),"				
+									    		   "('P2', 'HC2'),"
+									    		   "('P2', 'HC3'),"
+									    		   "('P2', 'HC4'),"
+									    		   "('P3', 'HC1'),"
+									    		   "('P3', 'HC2'),"
+									    		   "('P3', 'HC3'),"
+									    		   "('P3', 'HC4'),"
+												   "('P4', 'HC1'),"
+												   "('P4', 'HC2'),"
+												   "('P4', 'HC3'),"
+									    		   "('P4', 'HC4')")
+c.execute("""create table course_instructor (course_number text, instructor_number text)""")
+c.execute("insert into course_instructor Values ('S1', 'P1'),"
+                                               "('S1', 'P2'),"
+                                               "('S2', 'P1')," 
+                                               "('S2', 'P2')," 
+                                               "('S2', 'P3')," 
+                                               "('S3', 'P1'),"
+                                               "('S3', 'P2'),"
+                                               "('S4', 'P3'),"
+                                               "('S4', 'P4'),"
+                                               "('S5', 'P4'),"
+                                               "('S6', 'P1'),"
+                                               "('S6', 'P3'),"
+                                               "('S7', 'P2'),"
+                                               "('S7', 'P4')")
+c.execute("""create table course (number text, name text, max_numb_of_students)""")
+c.execute("insert into course Values ('S1', '1ro', 25),"
+                                    "('S2', '2do', 35)," 
+                                    "('S3', '3ro', 25),"
+                                    "('S4', '4to', 30),"
+                                    "('S5', '5to', 35),"
+                                    "('S6', '6to', 45),"
+                                    "('S7', '7mo', 45)")
+c.execute("""create table dept (name text)""")
+c.execute("insert into dept Values ('INFO.'),"
+                                  "('MATE.'),"
+                                  "('MECA.')")
+c.execute("""create table dept_course (name text, course_numb text)""")
+c.execute("insert into dept_course Values ('INFO.', 'S1'),"
+                                         "('INFO.', 'S3'),"
+                                         "('MATE.', 'S2'),"
+                                         "('MATE.', 'S4'),"
+                                         "('MATE.', 'S5'),"
+                                         "('MECA.', 'S6'),"
+                                         "('MECA.', 'S7')")
+conn.commit()
+c.close()
+conn.close()
+
+import time
+import math
+import sqlite3 as sqlite           # Importa la librería para manejar la base de datos del sistema
+import prettytable as prettytable  # Importa la librería para mostrar los horarios de una manera más ordenada en la consola
+import random as rnd               # Importa la librería para generar números aleatorios
+from enum import Enum              # Importa la clase Enum para definir una enumeración para los días de la semana
+
+# Parámetros del Algoritmo Genético
+POPULATION_SIZE = 9                # Tamaño de la población
+NUMB_OF_ELITE_SCHEDULES = 2        # Número de horarios élite que se mantienen sin cambios en cada generación
+TOURNAMENT_SELECTION_SIZE = 3      # Tamaño de la selección por torneo
+MUTATION_RATE = 0.2                # Tasa de mutación
+VERBOSE_FLAG = False               # Bandera para controlar la salida de información detallada
+
+# Inicialización de la conexión a la base de datos y selección de datos
+class DBMgr:
+  def __init__(self):                                     # Conexión a la base de datos  
+    self._conn = sqlite.connect('Horario.db')
+    self._c = self._conn.cursor()                         # Selección de salones, horarios de reuniones, instructores, cursos y departamentos
+    self._rooms = self._select_rooms()                    # Llamada al método _select_rooms() para obtener la lista de salones
+    self._meetingTimes = self._select_meeting_times()     # Llamada al método _select_meeting_times() para obtener la lista de horarios de reuniones
+    self._instructors = self._select_instructors()        # Llamada al método _select_instructors() para obtener la lista de instructores
+    self._courses = self._select_courses()                # Llamada al método _select_courses() para obtener la lista de cursos
+    self._depts = self._select_depts()                    # Llamada al método _select_depts() para obtener la lista de departamentos
+    self._numberOfClasses = 0                           
+    for i in range(0, len(self._depts)):
+      self._numberOfClasses += len(self._depts[i].get_courses())  # Cálculo del número total de clases
+
+  def _select_rooms(self):                                # Selección de los salones desde la tabla de la base de datos
+    self._c.execute("SELECT * FROM room")                 # Ejecución de la consulta SQL
+    rooms = self._c.fetchall()                            # Obtención de los resultados
+    returnRooms = []                                      # Creación de una lista de objetos Room
+    for i in range(0, len(rooms)):
+      returnRooms.append(Room(rooms[i][0], rooms[i][1]))  # Creación de objetos Room y agregación a la lista
+    return returnRooms
+
+  def _select_meeting_times(self):                        # Selección de los horarios de reuniones desde la tabla de la base de datos
+    self._c.execute("SELECT * FROM meeting_time")         # Ejecución de la consulta SQL
+    meetingTimes = self._c.fetchall()                     # Obtención de los resultados
+    returnMeetingTimes = []                               # Creación de una lista de objetos MeetingTime
+    for i in range(0, len(meetingTimes)):
+      returnMeetingTimes.append(MeetingTime(meetingTimes[i][0], meetingTimes[i][1]))  # Creación de objetos MeetingTime y agregación a la lista
+    return returnMeetingTimes
+
+  def _select_instructors(self):                          # Selecciona todos los instructores de la tabla instructor
+    self._c.execute("SELECT * FROM instructor")           # Recupera los instructores seleccionados
+    instructors = self._c.fetchall()                      # Crea una lista vacía de instructores
+    returnInstructors = []                                # Itera a través de cada fila de instructores seleccionados
+    for i in range(0, len(instructors)):                  # Agrega a la lista de instructores un nuevo objeto Instructor, pasando sus valores de ID, nombre y disponibilidad
+      returnInstructors.append(Instructor(instructors[i][0], instructors[i][1], self._select_instructor_availability(instructors[i][0])))
+    return returnInstructors                              # Devuelve la lista de instructores creada
+    
+  def _select_instructor_availability(self, instructor):       # Selecciona todas las filas de instructor_availability que corresponden al ID de instructor especificado
+    self._c.execute("SELECT * from instructor_availability where instructor_id = '" + instructor + "'") # Recupera todas las filas seleccionadas
+    instructorMTsRS = self._c.fetchall()                       # Crea una lista vacía para almacenar los tiempos de reunión del instructor
+    instructorMTs = []                                         # Itera a través de cada fila de tiempo de reunión seleccionada
+    for i in range(0, len(instructorMTsRS)): 
+      instructorMTs.append(instructorMTsRS[i][1])              # Agrega a la lista de tiempos de reunión del instructor el ID del MeetingTime correspondiente
+      instructorAvailability = list()                          # Crea una lista vacía para almacenar la disponibilidad del instructor  # Itera a través de cada MeetingTime
+    for i in range(0, len(self._meetingTimes)):                # Si el ID del MeetingTime está en la lista de tiempos de reunión del instructor
+      if self._meetingTimes[i].get_id() in instructorMTs:      # Agrega el MeetingTime a la lista de disponibilidad del instructor
+        instructorAvailability.append(self._meetingTimes[i])   # Devuelve la lista de disponibilidad del instructor creada
+    return instructorAvailability
+
+  def _select_courses(self):                               # Ejecutar consulta SQL para seleccionar todos los cursos
+    self._c.execute("SELECT * FROM course")                # Obtener los resultados de la consulta SQL
+    courses = self._c.fetchall()                           # Crear una lista vacía para almacenar los objetos Course
+    returnCourses = []                                     # Recorrer cada fila de resultados y crear un objeto Course para cada una
+    for i in range(0, len(courses)):                       # Crear un objeto Course y agregarlo a la lista de returnCourses
+      returnCourses.append(Course(courses[i][0], courses[i][1], self._select_course_instructors(courses[i][0]), courses[i][2]))
+    return returnCourses                                   # Retornar la lista de objetos Course
+
+  def _select_depts(self): 
+    self._c.execute("SELECT * FROM dept") # Este método se utiliza para seleccionar los departamentos y sus cursos correspondientes de la base de datos.
+    # Se ejecuta la consulta SQL "SELECT * FROM dept" en la base de datos utilizando el cursor _c de la conexión a la base de datos.
+    # Se recuperan todas las filas seleccionadas por la consulta anterior y se guardan en la variable 'depts'.
+    # El método fetchall() devuelve una lista de tuplas, donde cada tupla representa una fila de la tabla.
+    depts = self._c.fetchall() 
+    returnDepts = []    # Se define una nueva lista vacía llamada 'returnDepts' que se utilizará para almacenar los objetos Department creados a partir de los datos de la base de datos.
+    for i in range(0, len(depts)): # Se itera sobre todas las filas seleccionadas por la consulta anterior.
+      # Para cada fila seleccionada, se crea un nuevo objeto Department utilizando la primera columna de la fila como el ID del departamento
+      # y llamando al método _select_dept_courses() para recuperar una lista de objetos Course correspondientes a ese departamento.
+      # El objeto Department creado se agrega a la lista 'returnDepts'.
+      returnDepts.append(Department(depts[i][0], self._select_dept_courses(depts[i][0])))
+    return returnDepts # Finalmente, el método devuelve la lista 'returnDepts' que contiene todos los objetos Department creados a partir de los datos de la base de datos
+   
+  def _select_course_instructors(self, courseNumber):
+    # Este método se utiliza para seleccionar los instructores asociados con un curso específico de la base de datos.
+    # Se ejecuta la consulta SQL "SELECT * FROM course_instructor where course_number == 'courseNumber'" en la base de datos utilizando el cursor _c de la conexión a la base de datos.
+    # Se utiliza la variable 'courseNumber' para sustituir el valor del parámetro en la consulta SQL.
+    self._c.execute("SELECT * FROM course_instructor where course_number == '" + courseNumber + "'")
+    # Se recuperan todas las filas seleccionadas por la consulta anterior y se guardan en la variable 'dbInstructorNumbers'.
+    # El método fetchall() devuelve una lista de tuplas, donde cada tupla representa una fila de la tabla.
+    dbInstructorNumbers = self._c.fetchall()
+    # Se crea una lista vacía llamada 'instructorNumbers' que se utilizará para almacenar los números de los instructores recuperados de la base de datos.
+    instructorNumbers = []
+    instructorNumbers = []
+    # Se itera sobre todas las filas seleccionadas por la consulta anterior.
+    for i in range(0, len(dbInstructorNumbers)):
+      # Para cada fila seleccionada, se agrega el número de instructor correspondiente a la lista 'instructorNumbers'.
+      # El número de instructor se encuentra en la segunda columna de la tabla 'course_instructor'.
+      instructorNumbers.append(dbInstructorNumbers[i][1])
+    returnValue = [] # Se crea una lista vacía llamada 'returnValue' que se utilizará para almacenar los objetos Instructor correspondientes a los números de instructor obtenidos anteriormente.
+    # Se itera sobre todos los objetos Instructor almacenados en la lista '_instructors'.
+    for i in range(0, len(self._instructors)):
+      # Para cada objeto Instructor, se verifica si su ID está en la lista 'instructorNumbers'.
+      # Si es así, se agrega el objeto Instructor a la lista 'returnValue'.
+      if  self._instructors[i].get_id() in instructorNumbers:
+        returnValue.append(self._instructors[i])
+    return returnValue  # Finalmente, el método devuelve la lista 'returnValue' que contiene todos los objetos Instructor correspondientes a los números de instructor obtenidos anteriormente.
+    
+  def _select_dept_courses(self, deptName):
+    # Este método se utiliza para seleccionar todos los cursos ofrecidos por un departamento específico de la base de datos.
+    # Se ejecuta la consulta SQL "SELECT * FROM dept_course where name == 'deptName'" en la base de datos utilizando el cursor _c de la conexión a la base de datos.
+    # Se utiliza la variable 'deptName' para sustituir el valor del parámetro en la consulta SQL.
+    self._c.execute("SELECT * FROM dept_course where name == '" + deptName + "'")
+    # Se recuperan todas las filas seleccionadas por la consulta anterior y se guardan en la variable 'dbCourseNumbers'.
+    # El método fetchall() devuelve una lista de tuplas, donde cada tupla representa una fila de la tabla.
+    dbCourseNumbers = self._c.fetchall()
+    # Se crea una lista vacía llamada 'courseNumbers' que se utilizará para almacenar los números de los cursos recuperados de la base de datos.
+    courseNumbers = []
+    # Se itera sobre todas las filas seleccionadas por la consulta anterior.
+    for i in range(0, len(dbCourseNumbers)):
+      # Para cada fila seleccionada, se agrega el número de curso correspondiente a la lista 'courseNumbers'.
+      # El número de curso se encuentra en la segunda columna de la tabla 'dept_course'.
+      courseNumbers.append(dbCourseNumbers[i][1])
+      # Se crea una lista vacía llamada 'returnValue' que se utilizará para almacenar los objetos Course correspondientes a los números de curso obtenidos anteriormente.
+    returnValue = []
+    # Se itera sobre todos los objetos Course almacenados en la lista '_courses'.
+    for i in range(0, len(self._courses)):
+      # Para cada objeto Course, se verifica si su número está en la lista 'courseNumbers'.
+      # Si es así, se agrega el objeto Course a la lista 'returnValue'.
+      if self._courses[i].get_number() in courseNumbers:
+        returnValue.append(self._courses[i])
+    return returnValue # Finalmente, el método devuelve la lista 'returnValue' que contiene todos los objetos Course correspondientes a los números de curso obtenidos anteriormente.
+
+  def get_rooms(self): return self._rooms #Esto es una definición de método para obtener una lista de salas.Devuelve la lista de salas almacenada en el objeto Schedule.hace a todos el mismo 
+  def get_instructors(self): return self._instructors
+  def get_courses(self): return self._courses
+  def get_depts(self): return self._depts
+  def get_meetingTimes(self): return self._meetingTimes
+  def get_numberOfClasses(self): return self._numberOfClasses
+
+class Schedule:
+  def __init__(self):
+    # Inicializa las variables de instancia
+    self._data = dbMgr  # Asigna un objeto a _data
+    self._classes = [] # Crea una lista vacía y la asigna a _classes
+    self._conflicts = []  # Crea una lista vacía y la asigna a _conflicts
+    self._fitness = -1 # Asigna el valor -1 a _fitness
+    self._classNumb = 0 # Asigna el valor 0 a _classNumb
+    self._isFitnessChanged = True # Asigna el valor True a _isFitnessChanged
+
+  def get_classes(self):
+    self._isFitnessChanged = True # Establece _isFitnessChanged en True
+    return self._classes # Devuelve la lista de clases almacenadas en _classes
+
+  def get_conflicts(self): 
+    return self._conflicts # Devuelve la lista de conflictos almacenados en _conflicts
+    
+  def get_fitness(self):# Si _isFitnessChanged es True, calcula la aptitud y establece _isFitnessChanged en False
+    if (self._isFitnessChanged == True):
+      self._fitness = self.calculate_fitness()
+      self._isFitnessChanged = False
+    return self._fitness # Devuelve el valor de aptitud almacenado en _fitness
+
+  def initialize(self): # Obtiene la lista de departamentos y recorre cada departamento
+    depts = self._data.get_depts()
+    for i in range(0, len(depts)):  # Obtiene la lista de cursos del departamento actual y recorre cada curso
+      courses = depts[i].get_courses()
+      for j in range(0, len(courses)): # Crea una nueva clase para cada curso y la añade a la lista de clases
+        newClass = Class(self._classNumb, depts[i], courses[j])
+        self._classNumb += 1 # Asigna una hora de reunión, una sala y un instructor aleatorios a la nueva clase
+        newClass.set_meetingTime(dbMgr.get_meetingTimes()[rnd.randrange(0, len(dbMgr.get_meetingTimes()))])
+        newClass.set_room(dbMgr.get_rooms()[rnd.randrange(0, len(dbMgr.get_rooms()))])
+        newClass.set_instructor(courses[j].get_instructors()[rnd.randrange(0, len(courses[j].get_instructors()))])
+        self._classes.append(newClass)
+    return self
+
+  def calculate_fitness(self):  # Reinicia la lista de conflictos
+    self._conflicts = []    # Obtiene la lista de clases y recorre cada clase
+    classes = self.get_classes()
+    for i in range(0, len(classes)):  # Crea una lista de conflictos de capacidad de asientos para la clase actual
+      seatingCapacityConflict = list()
+      seatingCapacityConflict.append(classes[i])  # Si la capacidad de asientos de la sala es menor que el número máximo de estudiantes para el curso, añade un conflicto
+      if (classes[i].get_room().get_seatingCapacity() < classes[i].get_course().get_maxNumbOfStudents()):
+        self._conflicts.append(Conflict(Conflict.ConflictType.NUMB_OF_STUDENTS, seatingCapacityConflict)) # Si la hora de reunión de la clase actual no está disponible para el instructor, añade un conflicto
+      if (classes[i].get_meetingTime() not in classes[i].get_instructor().get_availability()):
+        conflictBetweenClasses = list()
+        conflictBetweenClasses.append(classes[i])
+        self._conflicts.append(Conflict(Conflict.ConflictType.INSTRUCTOR_AVAILABILITY, conflictBetweenClasses)) # Compara la clase actual con cada otra clase
+      for j in range(0, len(classes)):
+        if (j >= i):  # Si la clase actual y la otra clase tienen la misma hora de reunión y diferentes ID, añade conflictos según corresponda
+          if (classes[i].get_meetingTime() == classes[j].get_meetingTime() and classes[i].get_id() != classes[j].get_id()):
+            if (classes[i].get_room() == classes[j].get_room()):
+              roomBookingConflict = list()
+              roomBookingConflict.append(classes[i])
+              roomBookingConflict.append(classes[j])
+              self._conflicts.append(Conflict(Conflict.ConflictType.ROOM_BOOKING, roomBookingConflict))
+            if (classes[i].get_instructor() == classes[j].get_instructor()):
+              instructorBookingConflict = list()
+              instructorBookingConflict.append(classes[i])
+              instructorBookingConflict.append(classes[j])
+              self._conflicts.append(Conflict(Conflict.ConflictType.INSTRUCTOR_BOOKING, instructorBookingConflict))
+    return 1 / ((1.0 * len(self._conflicts) + 1)) # Devuelve el valor de aptitud como el inverso de la cantidad de conflictos más uno
+
+  def __str__(self):  # Inicializamos la variable que guardará el resultado a devolver
+    returnValue = "" # Recorremos el array de clases
+    for i in range(0, len(self._classes)-1):  # Convertimos cada clase a string y lo añadimos a la variable de resultado, junto con una coma y un espacio
+      returnValue += str(self._classes[i]) + ", "    # Añadimos la última clase a la variable de resultado sin la coma y el espacio final
+    returnValue += str(self._classes[len(self._classes)-1])
+    return returnValue     # Devolvemos el resultado
+
+class Population:
+  def __init__(self, size):  # Guardamos el tamaño de la población y el objeto de la base de datos en variables internas
+    self._size = size # Inicializamos un array de horarios (Schedule) de tamaño "size", que son creados mediante el método "initialize" de la clase Schedule
+    self._data = dbMgr
+    self._schedules = []
+    for i in range(0, size): self._schedules.append(Schedule().initialize())
+
+  def get_schedules(self): 
+    return self._schedules  # Devolvemos el array de horarios
+
+class GeneticAlgorithm:
+  def evolve(self, population): 
+    return self._mutate_population(self._crossover_population(population))# Primero, se cruza la población  Luego, se muta la población resultante
+
+  def _crossover_population(self, pop): # Crear una nueva población para contener los horarios cruzados
+    crossover_pop = Population(0) # Agregar los horarios élite a la nueva población
+    for i in range(NUMB_OF_ELITE_SCHEDULES):
+      crossover_pop.get_schedules().append(pop.get_schedules()[i])     # Agregar el resto de los horarios mediante el cruce
+    i = NUMB_OF_ELITE_SCHEDULES
+
+    while i < POPULATION_SIZE:# Seleccionar dos horarios de la población usando la selección de torneo
+      schedule1 = self._select_tournament_population(pop).get_schedules()[0]
+      schedule2 = self._select_tournament_population(pop).get_schedules()[0]
+      crossover_pop.get_schedules().append(self._crossover_schedule(schedule1, schedule2)) # Cruzar los horarios seleccionados y agregar el horario resultante a la nueva población
+      i += 1
+    return crossover_pop
+
+  def _mutate_population(self, population):# Mutar todos los horarios en la población excepto los horarios élite
+    for i in range(NUMB_OF_ELITE_SCHEDULES, POPULATION_SIZE):
+      self._mutate_schedule(population.get_schedules()[i])
+    return population
+
+  def _crossover_schedule(self, schedule1, schedule2): # Cruce cada clase en el nuevo horario
+    crossoverSchedule = Schedule().initialize()# Crear un nuevo horario para las clases cruzadas
+    for i in range(0, len(crossoverSchedule.get_classes())): # Seleccionar aleatoriamente una de las clases de los dos horarios de entrada
+      if (rnd.random() > 0.5): 
+        crossoverSchedule.get_classes()[i] = schedule1.get_classes()[i]
+      else: 
+        crossoverSchedule.get_classes()[i] = schedule2.get_classes()[i]
+    return crossoverSchedule
+
+  def _mutate_schedule(self, mutateSchedule):# Inicializar un nuevo horario para seleccionar aleatoriamente las clases
+    schedule = Schedule().initialize()  # Mutar cada clase en el horario con una probabilidad de MUTATION_RATE
+    for i in range(0, len(mutateSchedule.get_classes())):
+      if(MUTATION_RATE > rnd.random()): 
+        pos=rnd.randint(0,len(mutateSchedule.get_classes())-1)
+        mutateSchedule.get_classes()[i] = schedule.get_classes()[pos]
+    return mutateSchedule
+
+  def _select_tournament_population(self, pop):
+    tournament_pop = Population(0)  # Inicializar una nueva población para el torneo
+    i = 0 # Seleccionar aleatoriamente horarios de la población original para el torneo
+    while i < TOURNAMENT_SELECTION_SIZE:
+      tournament_pop.get_schedules().append(pop.get_schedules()[rnd.randrange(0, POPULATION_SIZE)])
+      i += 1  # Ordenar la población del torneo por aptitud en orden descendente
+    tournament_pop.get_schedules().sort(key=lambda x: x.get_fitness(), reverse=True)
+    return tournament_pop
+
+class Course:
+  def __init__(self, number, name, instructors, maxNumbOfStudents): # Devuelve de los variables cada uno de ellos
+    self._number = number
+    self._name = name
+    self._maxNumbOfStudents = maxNumbOfStudents
+    self._instructors = instructors
+
+  def get_number(self): return self._number
+  def get_name(self): return self._name
+  def get_instructors(self): return self._instructors
+  def get_maxNumbOfStudents(self): return self._maxNumbOfStudents
+  def __str__(self): return self._name
+
+class Instructor:
+  def __init__(self, id, name, availability): # Devuelve de los variables cada uno de ellos
+    self._id = id
+    self._name = name
+    self._availability = availability
+  def get_id(self): return self._id
+  def get_name(self): return self._name
+  def get_availability(self): return self._availability
+  def __str__(self): return self._name
+
+class Room:
+  def __init__(self, number, seatingCapacity): # Devuelve de los variables cada uno de ellos
+    self._number = number
+    self._seatingCapacity = seatingCapacity
+  def get_number(self): return self._number
+  def get_seatingCapacity(self): return self._seatingCapacity
+
+class MeetingTime:
+  def __init__(self, id, time): # Devuelve de los variables cada uno de ellos
+    self._id = id
+    self._time = time
+  def get_id(self): return self._id
+  def get_time(self): return self._time
+
+class Department:
+  def __init__(self, name, courses): # Devuelve de los variables cada uno de ellos
+    self._name = name
+    self._courses = courses
+  def get_name(self): return self._name
+  def get_courses(self): return self._courses
+
+class Class:
+  def __init__(self, id, dept, course): # Devuelve de los variables cada uno de ellos
+    self._id = id
+    self._dept = dept
+    self._course = course
+    self._instructor = None
+    self._meetingTime = None
+    self._room = None
+
+  def get_id(self): return self._id
+  def get_dept(self): return self._dept
+  def get_course(self): return self._course
+  def get_instructor(self): return self._instructor
+  def get_meetingTime(self): return self._meetingTime
+  def get_room(self): return self._room
+  def set_instructor(self, instructor): self._instructor = instructor # Asigna un instructor,horario,salon a la clase
+  def set_meetingTime(self, meetingTime): self._meetingTime = meetingTime
+  def set_room(self, room): self._room = room
+  def __str__(self): # Devuelve una representación en cadena de la clase
+    return str(self._dept.get_name()) + "," + str(self._course.get_number()) + "," + \
+           str(self._room.get_number()) + "," + str(self._instructor.get_id()) + "," + str(self._meetingTime.get_id())
+
+class Conflict:
+  class ConflictType(Enum):
+    INSTRUCTOR_BOOKING = 1 # Conflicto de reserva de instructor
+    ROOM_BOOKING = 2 # Conflicto de reserva de aula
+    NUMB_OF_STUDENTS = 3 # Conflicto de número de estudiantes
+    INSTRUCTOR_AVAILABILITY = 4  # Conflicto de disponibilidad del instructor
+    
+  def __init__(self, conflictType, conflictBetweenClasses):
+    self._conflictType = conflictType # Tipo de conflicto
+    self._conflictBetweenClasses = conflictBetweenClasses # Clases en conflicto
+  def get_conflictType(self): return self._conflictType # Métodos getter para obtener el tipo de conflicto y las clases en conflicto
+  def get_conflictBetweenClasses(self): return self._conflictBetweenClasses
+  def __str__(self): return str(self._conflictType)+" "+str(" and ".join(map(str, self._conflictBetweenClasses))) # Método para obtener una representación en forma de cadena de la instancia de ConflictType
+
+class DisplayMgr:
+  @staticmethod
+  def display_input_data(): # imprime el encabezado para la visualización de datos
+    print("\n> Base de Datos.") # llama a los siguientes métodos para mostrar cada tipo de datos
+    DisplayMgr.display_dept()
+    DisplayMgr.display_course()
+    DisplayMgr.display_room()
+    DisplayMgr.display_instructor()
+    DisplayMgr.display_meeting_times()
+
+  @staticmethod
+  def display_dept():# obtiene todos los departamentos de la base de datos
+    depts = dbMgr.get_depts()
+    # crea una tabla con nombres de columnas para el departamento y sus cursos
+    availableDeptsTable = prettytable.PrettyTable(['Materia', 'Semestre'])
+    # itera a través de cada departamento
+    for i in range(0, len(depts)):# obtiene los cursos ofrecidos por el departamento actual
+      courses = depts.__getitem__(i).get_courses()
+      tempStr = "["  # itera a través de cada curso ofrecido por el departamento actual
+      for j in range(0, len(courses) - 1):  # agrega la representación de cadena del curso a tempStr
+        tempStr += courses[j].__str__() + ", "  # agrega el último curso a tempStr sin una coma
+      tempStr += courses[len(courses) - 1].__str__() + "]" # agrega el nombre del departamento y los cursos ofrecidos a la tabla
+      availableDeptsTable.add_row([depts.__getitem__(i).get_name(), tempStr])   
+    print(availableDeptsTable)  # imprime la tabla
+
+  @staticmethod
+  def display_course(): # crea una tabla con nombres de columna para la información del curso
+    availableCoursesTable = prettytable.PrettyTable(['Clave', 'Semestre', '#Max. Estudiantes', 'Profesores']) # obtiene todos los cursos de la base de datos
+    courses = dbMgr.get_courses() # itera a través de cada curso
+    for i in range(0, len(courses)): # obtiene todos los instructores que enseñan este curso
+      instructors = courses[i].get_instructors()
+      tempStr = "" # itera a través de cada instructor que enseña este curso
+      for j in range(0, len(instructors) - 1): # agrega la representación de cadena del instructor a tempStr
+        tempStr += instructors[j].__str__() + ", " # agrega el último instructor a tempStr sin una coma
+      tempStr += instructors[len(instructors) - 1].__str__() # agrega la información del curso a la tabla
+      availableCoursesTable.add_row([courses[i].get_number(), courses[i].get_name(), str(courses[i].get_maxNumbOfStudents()), tempStr])
+    print(availableCoursesTable) # imprime la tabla
+
+  @staticmethod
+  def display_instructor():  # crea una tabla con nombres de columna para la información del instructor
+    availableInstructorsTable = prettytable.PrettyTable(['Clave', 'Profesor', 'Disponibilidad']) # obtiene todos los instructores de la base de datos
+    instructors = dbMgr.get_instructors() # itera a través de cada instructor
+    for i in range(0, len(instructors)):
+      availability = []  # itera a través de cada momento en que el instructor está disponible
+      for j in range(0, len(instructors[i].get_availability())):
+        availability.append(instructors[i].get_availability()[j].get_id())   # agrega el ID del momento de disponibilidad a la lista de disponibilidad
+      availableInstructorsTable.add_row([instructors[i].get_id(),instructors[i].get_name(), availability]) # agrega la información del instructor a la tabla
+    print(availableInstructorsTable) # imprime la tabla
+
+  @staticmethod
+  def display_room():
+    availableRoomsTable = prettytable.PrettyTable(['Aula', 'Max. Capacidad Aula'])# Crea una tabla PrettyTable con las columnas 'room #' y 'max seating capacity'
+    rooms = dbMgr.get_rooms() # Obtiene la lista de habitaciones del objeto dbMgr
+    for i in range(0, len(rooms)):  # Recorre la lista de habitaciones y añade una fila a la tabla por cada habitación
+      availableRoomsTable.add_row([str(rooms[i].get_number()), str(rooms[i].get_seatingCapacity())])
+    print(availableRoomsTable)   # Imprime la tabla en la consola
+
+  @staticmethod
+  def display_meeting_times():   # Crea una tabla PrettyTable con las columnas 'id' y 'Meeting Time'
+    availableMeetingTimeTable = prettytable.PrettyTable(['Clave', 'Horario Clase'])
+    meetingTimes = dbMgr.get_meetingTimes()# Obtiene la lista de tiempos de reunión del objeto dbMgr
+    for i in range(0, len(meetingTimes)):  # Recorre la lista de tiempos de reunión y añade una fila a la tabla por cada tiempo de reunión
+      availableMeetingTimeTable.add_row([meetingTimes[i].get_id(), meetingTimes[i].get_time()])
+    print(availableMeetingTimeTable)  # Imprime la tabla en la consola
+
+  @staticmethod
+  def display_generation(population):  # Crear una nueva tabla con los encabezados dados
+    table1 = prettytable.PrettyTable(['#Horario', 'Fitness', '#Conflictos', 'Clases [Materia,Semestre,Aula,Profesor,Horario Clase]'])
+    schedules = population.get_schedules() # Obtener todas las horarios de la población dada   # Para cada horario en la población
+    for i in range(0, len(schedules)): # Agregar una fila a la tabla con la información correspondiente a ese horario
+      table1.add_row([str(i+1), round(schedules[i].get_fitness(),3), len(schedules[i].get_conflicts()), schedules[i].__str__()])
+    print(table1) # Imprimir la tabla
+
+  @staticmethod
+  def display_schedule_as_table(schedule):# Obtener todas las clases en el horario dado
+    classes = schedule.get_classes()  # Crear una nueva tabla con los encabezados dados
+    table = prettytable.PrettyTable(['#Clase', 'Materia', 'Semestre (Clave, #Max. Estudiantes)', 'Aula (Capacidad)', 'Profesor (Clave)',  'Horario Clase (Clave)'])   # Para cada clase en el horario
+    for i in range(0, len(classes)): # Agregar una fila a la tabla con la información correspondiente a esa clase
+      table.add_row([str(i+1), classes[i].get_dept().get_name(), classes[i].get_course().get_name() + " (" +
+      classes[i].get_course().get_number() + ", " +
+      str(classes[i].get_course().get_maxNumbOfStudents()) +")",
+      classes[i].get_room().get_number() + " (" + str(classes[i].get_room().get_seatingCapacity()) + ")",
+      classes[i].get_instructor().get_name() +" (" + str(classes[i].get_instructor().get_id()) +")",
+      classes[i].get_meetingTime().get_time() +" (" + str(classes[i].get_meetingTime().get_id()) +")"])
+    print(table)       # Imprimir la tabla
+
+  @staticmethod
+  def display_schedule_meetingTimes(schedule):# Imprime un encabezado que indica la perspectiva de la tabla
+    print("\n> Horario por Tiempo.")   # Crea una tabla con columnas para el id del horario de clases, el horario de clases y la lista de clases
+    meetingTimesTable = prettytable.PrettyTable(['Clave', 'Horario Clase', 'Clases [Materia,Semestre,Aula,Profesor,Horario Clase] ']) # Obtiene todos los horarios de clases de la base de datos
+    meetingTimes = dbMgr.get_meetingTimes() # Para cada horario de clases, crea una lista de clases programadas durante ese horario
+    # y agrega una fila a la tabla con el id del horario de clases, el horario de clases y la lista de clases
+    for i in range(0, len(meetingTimes)):
+      classes = list()
+      for j in range(0, len(schedule.get_classes())):
+        if schedule.get_classes()[j].get_meetingTime() == meetingTimes[i]:
+          classes.append(str(schedule.get_classes()[j]))
+      meetingTimesTable.add_row([meetingTimes[i].get_id(), meetingTimes[i].get_time(), str(classes)])
+    print(meetingTimesTable) # Imprime la tabla
+
+  @staticmethod
+  def display_schedule_rooms(schedule): # Imprime un encabezado que indica la perspectiva de la tabla
+    print("\n> Horario por Aulas.") # Crea una tabla con columnas para el número de aula y la lista de clases
+    scheduleRoomsTable = prettytable.PrettyTable(['Aula','Clases [Materia,Semestre,Aula,Profesor,Horario Clase] '])
+    rooms = dbMgr.get_rooms()  # Obtiene todas las aulas de la base de datos  Para cada aula, crea una lista de clases programadas en esa aula
+    # y agrega una fila a la tabla con el número de aula y la lista de clases
+    for i in range(0, len(rooms)):
+      roomSchedule = list()
+      for j in range(0, len(schedule.get_classes())):
+        if schedule.get_classes()[j].get_room() == rooms[i]:
+          roomSchedule.append(str(schedule.get_classes()[j]))
+      scheduleRoomsTable.add_row([str(rooms[i].get_number()), str(roomSchedule)])
+    print(scheduleRoomsTable)  # Imprime la tabla
+
+  @staticmethod
+  def display_schedule_instructors(schedule):# Imprime el título de la tabla desde la perspectiva del instructor
+    print("\n> Horario por Profesores.")  # Crea una tabla con las columnas: id, instructor, clases y disponibilidad
+    instructorsTable = prettytable.PrettyTable(['Clave', 'Profesor', "Clases [Materia,Semestre,Aula,Profesor,Horario Clase]",'Disponibilidad']) # Obtiene todos los instructores de la base de datos
+    instructors = dbMgr.get_instructors() # Itera a través de todos los instructores
+    for i in range(0, len(instructors)):
+      availability = []  # Crea una lista de disponibilidad del instructor actual
+      for j in range(0, len(instructors[i].get_availability())):
+        availability.append(instructors[i].get_availability()[j].get_id()) # Crea una lista de clases del instructor actual
+      classSchedule = list()
+      for j in range(0, len(schedule.get_classes())):
+        if schedule.get_classes()[j].get_instructor() == instructors[i]:
+          classSchedule.append(str(schedule.get_classes()[j]))  # Agrega una nueva fila a la tabla con la información del instructor actual
+      instructorsTable.add_row([instructors[i].get_id(), instructors[i].get_name(), str(classSchedule), availability])
+    print(instructorsTable) # Imprime la tabla completa
+
+  @staticmethod
+  def display_schedule_conflicts(schedule):#El propósito de esta función es mostrar en la consola una tabla que resume los conflictos de horario encontrados en schedule.
+    conflictsTable = prettytable.PrettyTable(['Tipo de Conflicto', 'Conflicto entre Clases'])#Esto crea un objeto PrettyTable de la biblioteca prettytable con dos columnas llamadas conflict type y conflict between classes.
+    conflicts = schedule.get_conflicts() #Esto llama al método get_conflicts() del objeto schedule para obtener una lista de conflictos de horario.
+    for i in range(0, len(conflicts)): #Esto crea un bucle que recorre todos los conflictos de horario en la lista conflicts.
+      conflictsTable.add_row([str(conflicts[i].get_conflictType()), #En cada iteración del bucle, se agrega una fila a conflictsTable que contiene la descripción del tipo de conflicto y la lista de clases en conflicto, utilizando los métodos get_conflictType() y get_conflictBetweenClasses() del objeto conflicts[i]. La segunda columna se crea utilizando la función join() para concatenar los nombres de las clases con la cadena " and ".
+                              str("  and  ".join(map(str, conflicts[i].get_conflictBetweenClasses())))])
+    if (len(conflicts) > 0): print(conflictsTable) #Finalmente, si la lista conflicts tiene al menos un elemento, la tabla de conflictos se imprime en la consola utilizando la función print().
+
+def find_fittest_schedule(verboseFlag): #. El propósito de esta función es encontrar la programación más apta utilizando un algoritmo genético.
+  inicio = time.time() 
+  generationNumber = 0 # Esta variable se utilizará para rastrear el número de generaciones de la población.
+  ConvergenciaGeneral=0
+  FitnessPromedio=0
+  Entropia=0
+  if (verboseFlag): 
+    print("> Generación # "+str(generationNumber)) #Si verboseFlag es True, se imprime en la consola un mensaje que indica el número de la generación actual.
+  population = Population(POPULATION_SIZE) #Esto crea un objeto Population con un tamaño especificado por la constante POPULATION_SIZE. El objeto Population contiene una lista de programaciones.
+  population.get_schedules().sort(key=lambda x: x.get_fitness(), reverse=True) #Se ordena la lista de programaciones de la población por su aptitud, de manera descendente.
+  if (verboseFlag):
+    DisplayMgr.display_generation(population) #Si verboseFlag es True, se llaman a varias funciones del objeto DisplayMgr para mostrar información sobre la población actual y su programación más apta.
+    DisplayMgr.display_schedule_as_table(population.get_schedules()[0])
+    DisplayMgr.display_schedule_conflicts(population.get_schedules()[0])
+  geneticAlgorithm = GeneticAlgorithm() #Esto crea un objeto GeneticAlgorithm, que se utilizará para evolucionar la población.
+  while (population.get_schedules()[0].get_fitness() != 1.0):#Esto crea un bucle que se ejecuta mientras la programación más apta de la población no tiene una aptitud de 1.0 (es decir, hasta que se encuentra la solución óptima).
+    generationNumber += 1 #En cada iteración del bucle, se incrementa la variable generationNumber y se imprime en la consola un mensaje que indica el número de la generación actual, si verboseFlag es True.
+    if (verboseFlag): 
+      print("\n> Generación # " + str(generationNumber))
+    oldpopulation=population.get_schedules()
+    population = geneticAlgorithm.evolve(population) #En cada iteración del bucle, se llama al método evolve() del objeto geneticAlgorithm para generar una nueva población.
+    population.get_schedules().sort(key=lambda x: x.get_fitness(), reverse=True) #Se ordena la lista de programaciones de la población por su aptitud, de manera descendente.
+    if (verboseFlag): #Si verboseFlag es True, se llaman a varias funciones del objeto DisplayMgr para mostrar información sobre la población actual y su programación más apta.
+      newpopulation=population.get_schedules()
+      cont=0
+      Entropia=0
+      for i in range(len(population.get_schedules())):
+        for j in range(i+1, len(population.get_schedules())):
+          if(newpopulation[i]==newpopulation[j]):
+            cont=cont+1
+
+      Alelos=len(population.get_schedules())-cont
+      for i in range(Alelos):
+        Entropia= Entropia -1 * (cont+1/Alelos * math.log2(cont+1/Alelos)) 
+        if(Entropia>1):
+          Entropia=1
+          break
+
+      AptitudPromedioNueva=0
+      AptitudPromedioVieja=0
+      for i in range(len(population.get_schedules())):
+        AptitudPromedioNueva= AptitudPromedioNueva + round(newpopulation[i].get_fitness(),3)
+        AptitudPromedioVieja= AptitudPromedioVieja + round(oldpopulation[i].get_fitness(),3)
+
+      Convergencia=((AptitudPromedioNueva-AptitudPromedioVieja)/9)/(AptitudPromedioVieja/9)
+      ConvergenciaGeneral=ConvergenciaGeneral+Convergencia
+      FitnessPromedio=FitnessPromedio + AptitudPromedioNueva
+
+      print("> Entropía de la Población: " + str(Entropia))
+      print("> Convergencia de la Población: " + str(round(Convergencia,3)))
+      DisplayMgr.display_generation(population)
+      DisplayMgr.display_schedule_as_table(population.get_schedules()[0])
+      DisplayMgr.display_schedule_conflicts(population.get_schedules()[0])
+      
+
+  print("\n> Solución encontrada después de " + str(generationNumber) + " generaciones.") #Se imprime en la consola un mensaje que indica el número total de generaciones que se tardó en encontrar la solución óptima.
+  fin = time.time()
+  print("> El tiempo de ejecución fue de " + str(round(fin-inicio,3)) + " segundos.")
+  print("> La entropía general es " + str(Entropia) + ".")
+  print("> La convergencia general es " + str(round(ConvergenciaGeneral,3)) + ".")
+  print("> El fitness promedio es " + str(round(FitnessPromedio/(generationNumber*9),3)) + ".")
+  return population.get_schedules()[0]
+
+def handle_command_line(verboseFlag):
+  while (True): ## El bucle while asegura que el usuario pueda ingresar varias opciones hasta que decida salir
+    # Se le solicita al usuario que ingrese una opción de entre las disponibles
+    entry = input("\n¿Qué quieres hacer?\n 1: Mostrar Base de Datos\n 2: Encontrar Horario\n 3: Modo General\n 4: Modo Detallado\n 5: Salir\n Respuesta: ")
+    # Si el usuario ingresa "1", se muestra la entrada inicial de datos
+    if (entry == "1"): 
+      DisplayMgr.display_input_data() # Si el usuario ingresa "2", se busca el horario más apto y se maneja su visualización
+    elif (entry == "2"):
+      schedule = find_fittest_schedule(verboseFlag)
+      handle_schedule_display(schedule)
+    elif (entry == "3"): 
+      print("\n> Modo General Seleccionado.")
+      verboseFlag = False # Si el usuario ingresa "3", se cambia el valor de verboseFlag a False
+    elif (entry == "4"): 
+      print("\n> Modo Detallado Seleccionado.")
+      verboseFlag = True # Si el usuario ingresa "4", se cambia el valor de verboseFlag a True
+    elif (entry == "5"): 
+      break # Si el usuario ingresa "5", se sale del bucle while y se termina la función
+
+def handle_schedule_display(schedule):# Se define la función handle_schedule_display para manejar la visualización del horario
+  while (True): # El bucle while asegura que el usuario pueda ingresar varias opciones hasta que decida salir
+    entry = input("\n¿Qué quieres mostrar?\n 1: Horario General\n 2: Horario por Tiempo\n 3: Horario por Aulas\n 4: Horario por Profesores\n 5: Regresar\n Respuesta: ") # # Se le solicita al usuario que ingrese una opción de entre las disponibles
+    if (entry == "1"):  # Si el usuario ingresa "1", se muestra el horario desde la perspectiva de las clases
+      print("\n> Horario General.")
+      DisplayMgr.display_schedule_as_table(schedule)
+    elif (entry == "2"): 
+      DisplayMgr.display_schedule_meetingTimes(schedule)# Si el usuario ingresa "2", se muestra el horario desde la perspectiva de los tiempos de reunión
+    elif (entry == "3"): 
+      DisplayMgr.display_schedule_rooms(schedule); # Si el usuario ingresa "3", se muestra el horario desde la perspectiva de las salas de reunión
+    elif (entry == "4"): 
+      DisplayMgr.display_schedule_instructors(schedule);# Si el usuario ingresa "4", se muestra el horario desde la perspectiva de los instructores
+    elif (entry == "5"): 
+      break # Si el usuario ingresa "5", se sale del bucle while y se termina la función
+
+dbMgr = DBMgr() # Se crea una instancia de la clase DBMgr
+handle_command_line(VERBOSE_FLAG) # Se llama a la función handle_command_line con VERBOSE_FLAG como parámetro
